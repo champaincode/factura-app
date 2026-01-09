@@ -1,0 +1,15 @@
+{
+  "name": "generador-facturas",
+  "version": "1.0.0",
+  "description": "Generador de Facturas Pro",
+  "main": "app.js",
+  "scripts": {
+    "start": "node app.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2"
+  },
+  "engines": {
+    "node": ">=16.0.0"
+  }
+}

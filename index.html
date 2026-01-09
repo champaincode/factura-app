@@ -1,0 +1,1282 @@
+<!DOCTYPE html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Generador de Facturas Pro</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Configuración de Imports para React y Lucide -->
+    <script type="importmap">
+      {
+        "imports": {
+          "react": "https://esm.sh/react@18.2.0",
+          "react-dom/client": "https://esm.sh/react-dom@18.2.0/client",
+          "lucide-react": "https://esm.sh/lucide-react@0.263.1"
+        }
+      }
+    </script>
+    <!-- Babel para compilar el código en el navegador -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <style>
+      /* Estilos específicos de impresión que Tailwind a veces necesita ayuda para forzar */
+      @media print {
+        @page {
+          margin: 0;
+          size: auto;
+        }
+        body {
+          -webkit-print-color-adjust: exact;
+          print-color-adjust: exact;
+          margin: 0;
+          padding: 0;
+          background: white;
+        }
+        .print\:hidden {
+          display: none !important;
+        }
+        .print\:block {
+          display: block !important;
+        }
+        .print\:w-full {
+          width: 100% !important;
+        }
+        .print\:absolute {
+          position: absolute !important;
+        }
+        .print\:top-0 {
+          top: 0 !important;
+        }
+        .print\:left-0 {
+          left: 0 !important;
+        }
+        .print\:shadow-none {
+          box-shadow: none !important;
+        }
+      }
+    </style>
+  </head>
+  <body class="bg-gray-100 text-gray-800">
+    <div id="root"></div>
+
+    <!-- CÓDIGO DE LA APLICACIÓN -->
+    <script
+      type="text/babel"
+      data-type="module"
+      data-presets="react,typescript"
+    >
+      import React, { useState, useEffect, useRef } from "react";
+      import { createRoot } from "react-dom/client";
+      import {
+        Printer,
+        Send,
+        Download,
+        Upload,
+        Plus,
+        Trash2,
+        FileJson,
+        RefreshCcw,
+        Calculator,
+        AlertCircle,
+        CheckCircle2,
+        Sparkles,
+        X,
+        Loader2,
+      } from "lucide-react";
+
+      // --- CONFIGURACIÓN ---
+      // Si tienes una API Key de Gemini, ponla aquí para activar las funciones de IA
+      const apiKey = "AIzaSyCblnC6mYlKYtxEj6SPMHu2IN4C7PRilCs";
+
+      // Función auxiliar para llamar a Gemini
+      const callGemini = async (prompt, retries = 3) => {
+        if (!apiKey) {
+          throw new Error("API Key no configurada");
+        }
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
+        const payload = {
+          contents: [{ parts: [{ text: prompt }] }],
+        };
+
+        for (let i = 0; i < retries; i++) {
+          try {
+            const response = await fetch(url, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(payload),
+            });
+
+            if (!response.ok) throw new Error(`Error ${response.status}`);
+
+            const data = await response.json();
+            return data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+          } catch (err) {
+            if (i === retries - 1) throw err;
+            await new Promise((r) => setTimeout(r, 1000 * Math.pow(2, i))); // Backoff
+          }
+        }
+        return "";
+      };
+
+      // --- ESTADO INICIAL ---
+
+      const defaultItem = {
+        code: "",
+        title: "Servicios profesionales",
+        detail: "",
+        qty: 1,
+        unitPrice: 0,
+        vatPercent: 21,
+      };
+
+      const SERVICE_PACKS = [
+        {
+          id: "inicio_digital",
+          label: "1. Pack Inicio Digital",
+          title: "Pack Inicio Digital",
+          detail:
+            "Desarrollo de Landing Page responsiva (Diseño One Page) + Configuración básica de dominio y contacto.",
+        },
+        {
+          id: "automatizacion",
+          label: "2. Pack Automatización",
+          title: "Pack Automatización",
+          detail:
+            "Desarrollo Web Corporativo + Implementación de sistema automatizado de captura de datos a Hojas de Cálculo.",
+        },
+        {
+          id: "medida",
+          label: "3. Pack Desarrollo A Medida",
+          title: "Pack Desarrollo A Medida",
+          detail:
+            "Ingeniería de Software y desarrollo de Aplicación Web personalizada + Integración de sistemas y lógica de negocio.",
+        },
+        {
+          id: "other",
+          label: "Otro / Personalizado",
+          title: "",
+          detail: "",
+        },
+      ];
+
+      const initialState = {
+        integration: {
+          sheetsWebAppUrl: "https://script.google.com/macros/s/AKfycbz3ISZZdIhVS-VPaSh7uXm0Ie_qdtml5tE-HZScD2zuKHUTGJr0kCZ3mQd0avCznCH8rQ/exec",
+        },
+        issuer: {
+          brand: "DIGITALENCIA",
+          name: "Santiago José Rodríguez Rodríguez",
+          address: "C/ Mallorca, 10, 4º 17ª\n46730 Playa de Gandía (Valencia)",
+          taxIdLabel: "NIF",
+          taxId: "X8448296M",
+          phone: "642 25 09 02",
+          email: "sursuruguay@gmail.com",
+        },
+        client: {
+          name: "",
+          address: "",
+          taxIdLabel: "CIF",
+          taxId: "",
+          ref: "",
+        },
+        invoice: {
+          number: `${new Date().getFullYear()}-001`,
+          issueDate: new Date().toISOString().split("T")[0],
+          operationDate: new Date().toISOString().split("T")[0],
+          dueDate: "",
+          paymentMethod: "Transferencia Bancaria",
+          iban: "",
+          notes:
+            "Factura exenta de retención si procede.\nGracias por su confianza.",
+          invoiceLink: "",
+        },
+        taxes: {
+          applyIrpf: false,
+          irpfPercent: 15,
+        },
+        items: [{ ...defaultItem, unitPrice: 100 }],
+      };
+
+      // --- LÓGICA DE NEGOCIO Y UTILIDADES ---
+
+      const formatCurrency = (amount) => {
+        const safeAmount = Number.isNaN(amount) ? 0 : amount;
+        return new Intl.NumberFormat("es-ES", {
+          style: "currency",
+          currency: "EUR",
+          minimumFractionDigits: 2,
+        }).format(safeAmount);
+      };
+
+      const formatDate = (isoDate) => {
+        if (!isoDate) return "";
+        const [y, m, d] = isoDate.split("-");
+        return `${d}/${m}/${y}`;
+      };
+
+      const computeTotals = (items, taxes) => {
+        const safeNum = (n) => (Number.isNaN(n) ? 0 : n);
+        const base = items.reduce(
+          (acc, item) => acc + safeNum(item.qty) * safeNum(item.unitPrice),
+          0
+        );
+
+        const vatMap = new Map();
+
+        items.forEach((item) => {
+          const qty = safeNum(item.qty);
+          const price = safeNum(item.unitPrice);
+          const vat = safeNum(item.vatPercent);
+
+          const itemBase = qty * price;
+          const currentBase = vatMap.get(vat) || 0;
+          vatMap.set(vat, currentBase + itemBase);
+        });
+
+        const vatBreakdown = [];
+        let vatTotal = 0;
+
+        vatMap.forEach((groupBase, percent) => {
+          const quota = groupBase * (percent / 100);
+          vatBreakdown.push({
+            percent,
+            base: groupBase,
+            quota,
+          });
+          vatTotal += quota;
+        });
+
+        vatBreakdown.sort((a, b) => a.percent - b.percent);
+
+        let irpfAmount = 0;
+        if (taxes.applyIrpf && taxes.irpfPercent > 0) {
+          const safeIrpfPercent = safeNum(taxes.irpfPercent);
+          irpfAmount = base * (safeIrpfPercent / 100);
+        }
+
+        const grandTotal = base + vatTotal - irpfAmount;
+
+        return {
+          base,
+          vatBreakdown,
+          vatTotal,
+          irpfAmount,
+          grandTotal,
+        };
+      };
+
+      const nextInvoiceNumber = (currentNumber, issueDate) => {
+        const yearFromDate = issueDate.split("-")[0];
+        const regex = /^(\d{4})-(\d+)$/;
+        const match = currentNumber.match(regex);
+
+        if (match) {
+          const currentYear = match[1];
+          const sequence = parseInt(match[2], 10);
+
+          if (currentYear === yearFromDate) {
+            const nextSeq = sequence + 1;
+            return `${currentYear}-${nextSeq.toString().padStart(3, "0")}`;
+          } else {
+            return `${yearFromDate}-001`;
+          }
+        }
+        return `${yearFromDate}-001`;
+      };
+
+      // --- COMPONENTES UI ---
+
+      const SectionTitle = ({ children }) => (
+        <h3 className="text-sm font-bold text-gray-500 uppercase tracking-wider mb-3 mt-4 border-b pb-1">
+          {children}
+        </h3>
+      );
+
+      const InputField = ({
+        label,
+        value,
+        onChange,
+        type = "text",
+        placeholder = "",
+        className = "",
+        step,
+      }) => {
+        const safeValue = type === "number" && Number.isNaN(value) ? "" : value;
+        return (
+          <div className={`mb-2 ${className}`}>
+            <label className="block text-xs font-medium text-gray-700 mb-1">
+              {label}
+            </label>
+            <input
+              type={type}
+              step={step}
+              value={safeValue}
+              onChange={(e) => onChange(e.target.value)}
+              className="w-full text-sm border-gray-300 rounded-md shadow-sm focus:border-blue-500 focus:ring-blue-500 border p-2"
+              placeholder={placeholder}
+            />
+          </div>
+        );
+      };
+
+      const SelectField = ({
+        label,
+        value,
+        onChange,
+        options = [],
+        className = "",
+      }) => (
+        <div className={`mb-2 ${className}`}>
+          <label className="block text-xs font-medium text-gray-700 mb-1">
+            {label}
+          </label>
+          <select
+            value={value}
+            onChange={(e) => onChange(e.target.value)}
+            className="w-full text-sm border-gray-300 rounded-md shadow-sm focus:border-blue-500 focus:ring-blue-500 border p-2 bg-white"
+          >
+            {options.map((opt) => (
+              <option key={opt} value={opt}>
+                {opt}
+              </option>
+            ))}
+          </select>
+        </div>
+      );
+
+      const TextAreaField = ({ label, value, onChange, rows = 3 }) => (
+        <div className="mb-2">
+          <label className="block text-xs font-medium text-gray-700 mb-1">
+            {label}
+          </label>
+          <textarea
+            rows={rows}
+            value={value}
+            onChange={(e) => onChange(e.target.value)}
+            className="w-full text-sm border-gray-300 rounded-md shadow-sm focus:border-blue-500 focus:ring-blue-500 border p-2"
+          />
+        </div>
+      );
+
+      // --- COMPONENTE MODAL IA ---
+
+      const AIModal = ({ isOpen, onClose, onApply }) => {
+        const [inputText, setInputText] = useState("");
+        const [loading, setLoading] = useState(false);
+
+        if (!isOpen) return null;
+
+        const handleProcess = async () => {
+          if (!inputText.trim()) return;
+          setLoading(true);
+          await onApply(inputText);
+          setLoading(false);
+        };
+
+        return (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+            <div className="bg-white rounded-lg shadow-xl w-full max-w-lg overflow-hidden flex flex-col max-h-[90vh]">
+              <div className="p-4 border-b flex justify-between items-center bg-indigo-50">
+                <h3 className="text-lg font-bold text-indigo-900 flex items-center gap-2">
+                  <Sparkles className="w-5 h-5 text-indigo-600" />
+                  Rellenar Factura con IA
+                </h3>
+                <button
+                  onClick={onClose}
+                  className="text-gray-400 hover:text-gray-600"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <div className="p-6 flex-1 overflow-y-auto">
+                <p className="text-sm text-gray-600 mb-4">
+                  Pega aquí el contenido de un email o notas. (Requiere API Key
+                  configurada en el código)
+                </p>
+                <textarea
+                  className="w-full h-40 border border-gray-300 rounded-md p-3 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                  placeholder="Ej: Factura para Empresa S.L..."
+                  value={inputText}
+                  onChange={(e) => setInputText(e.target.value)}
+                  disabled={loading}
+                />
+              </div>
+
+              <div className="p-4 bg-gray-50 border-t flex justify-end gap-3">
+                <button
+                  onClick={onClose}
+                  className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-200 rounded-md transition"
+                  disabled={loading}
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={handleProcess}
+                  disabled={loading || !inputText.trim()}
+                  className="px-4 py-2 text-sm text-white bg-indigo-600 hover:bg-indigo-700 rounded-md shadow-sm flex items-center gap-2 transition disabled:opacity-50"
+                >
+                  {loading ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <Sparkles className="w-4 h-4" />
+                  )}
+                  {loading ? "Analizando..." : "Procesar Texto"}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      };
+
+      // --- COMPONENTE PRINCIPAL ---
+
+      function InvoiceApp() {
+        // Inicializar estado cargando el número de factura guardado si existe
+        const [state, setState] = useState(() => {
+          const savedNumber = localStorage.getItem("invoice_number");
+          if (savedNumber) {
+            return {
+              ...initialState,
+              invoice: { ...initialState.invoice, number: savedNumber },
+            };
+          }
+          return initialState;
+        });
+
+        const [totals, setTotals] = useState(
+          computeTotals(initialState.items, initialState.taxes)
+        );
+        const [sendingStatus, setSendingStatus] = useState("idle");
+        const [isAIModalOpen, setIsAIModalOpen] = useState(false);
+        const [polishingNotes, setPolishingNotes] = useState(false);
+
+        // Guardar el número de factura en LocalStorage cada vez que cambie
+        useEffect(() => {
+          localStorage.setItem("invoice_number", state.invoice.number);
+        }, [state.invoice.number]);
+
+        useEffect(() => {
+          const newTotals = computeTotals(state.items, state.taxes);
+          setTotals(newTotals);
+        }, [state.items, state.taxes]);
+
+        const handleAIMagicFill = async (text) => {
+          if (!apiKey) {
+            alert(
+              "Para usar funciones IA debes editar este archivo HTML y añadir tu API KEY en la línea de 'configuración'."
+            );
+            return;
+          }
+          const prompt = `
+              You are a data extraction assistant. Extract invoice information from the following text into a JSON object.
+              Structure: { "client": { "name": "...", ... }, "invoice": { ... }, "items": [ ... ] }
+              Text to analyze: "${text}"
+            `;
+
+          try {
+            const response = await callGemini(prompt);
+            const cleanJson = response
+              .replace(/```json/g, "")
+              .replace(/```/g, "")
+              .trim();
+            const parsed = JSON.parse(cleanJson);
+
+            setState((prev) => ({
+              ...prev,
+              client: { ...prev.client, ...parsed.client },
+              invoice: { ...prev.invoice, ...parsed.invoice },
+              items:
+                Array.isArray(parsed.items) && parsed.items.length > 0
+                  ? parsed.items
+                  : prev.items,
+            }));
+            setIsAIModalOpen(false);
+          } catch (e) {
+            alert("Error al procesar IA: " + e.message);
+          }
+        };
+
+        const handlePolishNotes = async () => {
+          if (!state.invoice.notes) return;
+          if (!apiKey) {
+            alert(
+              "Para usar funciones IA debes editar este archivo HTML y añadir tu API KEY."
+            );
+            return;
+          }
+          setPolishingNotes(true);
+          const prompt = `Reescribe profesionalmente: "${state.invoice.notes}"`;
+
+          try {
+            const polished = await callGemini(prompt);
+            if (polished) updateState("invoice", "notes", polished.trim());
+          } catch (e) {
+            alert("Error IA: " + e.message);
+          } finally {
+            setPolishingNotes(false);
+          }
+        };
+
+        const updateState = (section, field, value) => {
+          setState((prev) => ({
+            ...prev,
+            [section]: { ...prev[section], [field]: value },
+          }));
+        };
+
+        const updateItem = (index, field, value) => {
+          setState((prev) => {
+            const newItems = [...prev.items];
+            newItems[index] = { ...newItems[index], [field]: value };
+            return { ...prev, items: newItems };
+          });
+        };
+
+        const addItem = () => {
+          setState((prev) => ({
+            ...prev,
+            items: [...prev.items, { ...defaultItem }],
+          }));
+        };
+
+        const removeItem = (index) => {
+          if (state.items.length <= 1) return;
+          setState((prev) => ({
+            ...prev,
+            items: prev.items.filter((_, i) => i !== index),
+          }));
+        };
+
+        const handleNextNumber = () => {
+          const next = nextInvoiceNumber(
+            state.invoice.number,
+            state.invoice.issueDate
+          );
+          updateState("invoice", "number", next);
+        };
+
+        const handlePrint = () => {
+          setTimeout(() => {
+            window.focus();
+            window.print();
+          }, 100);
+        };
+
+
+
+        const sendToGoogleSheets = async () => {
+          const url = state.integration.sheetsWebAppUrl;
+          if (!url) {
+            alert(
+              "Por favor configura la URL del Web App de Google Sheets en la sección Integración."
+            );
+            return;
+          }
+
+          if (!state.client.name || !state.client.taxId) {
+            alert("Faltan datos obligatorios: Asegúrate de completar el Nombre del Cliente y su Documento/ID.");
+            return;
+          }
+          setSendingStatus("sending");
+
+          // Convertir Logo a Base64
+          let logoBase64 = "";
+          try {
+            const response = await fetch("img/digitalencia_logo.svg");
+            const blob = await response.blob();
+            logoBase64 = await new Promise((resolve) => {
+              const reader = new FileReader();
+              reader.onloadend = () => resolve(reader.result);
+              reader.readAsDataURL(blob);
+            });
+          } catch (e) {
+            console.error("Error al cargar logo para envío:", e);
+          }
+
+          // Simulación de envío para la versión local (ya que el iframe puede ser bloqueado por CORS en local file://)
+          // En un servidor real funcionaría igual que la app original.
+          const sheetPayload = {
+            invoiceNumber: state.invoice.number,
+            issueDate: state.invoice.issueDate
+              ? state.invoice.issueDate.split("-").reverse().join("/")
+              : "",
+            clientName: state.client.name,
+            clientTaxId: state.client.taxId,
+            baseTotal: formatCurrency(totals.base),
+            vatTypes: totals.vatBreakdown.map((v) => `${v.percent}%`).join(", "),
+            vatTotalFormatted: formatCurrency(totals.vatTotal),
+            irpfPercent: state.taxes.applyIrpf
+              ? `${state.taxes.irpfPercent}%`
+              : "0%",
+            irpfAmountFormatted: formatCurrency(totals.irpfAmount),
+            grandTotal: formatCurrency(totals.grandTotal),
+            logoBase64: logoBase64,
+            clientEmail: state.client.email,
+          };
+
+          // Enviar usando fetch (no-cors) para no abrir pestañas nuevas.
+          // Al usar no-cors, la respuesta es opaca (status 0), por lo que asumimos éxito si la promesa se resuelve.
+          // Si hay error de red, caerá en el catch.
+          
+          fetch(url, {
+            method: "POST",
+            mode: "no-cors", 
+            headers: {
+              "Content-Type": "text/plain"
+            },
+            body: JSON.stringify({
+             sheetData: sheetPayload,
+             raw: { ...state, totals },
+            })
+          }).then(() => {
+             setSendingStatus("success");
+             setTimeout(() => setSendingStatus("idle"), 3000);
+          }).catch((err) => {
+             console.error(err);
+             setSendingStatus("error");
+             setTimeout(() => setSendingStatus("idle"), 5000);
+          });
+        };
+
+        const missingFields = [];
+        if (!state.invoice.number) missingFields.push("Nº Factura");
+        if (!state.invoice.issueDate) missingFields.push("Fecha Emisión");
+        if (!state.issuer.name) missingFields.push("Nombre Emisor");
+        if (!state.client.name) missingFields.push("Nombre Cliente");
+
+        const isComplete = missingFields.length === 0;
+
+        return (
+          <div className="min-h-screen bg-gray-100 font-sans text-gray-800">
+            {/* TOAST NOTIFICATION */}
+            {(sendingStatus === "success" || sendingStatus === "error") && (
+              <div
+                className={`fixed bottom-4 right-4 px-6 py-3 rounded-md shadow-lg flex items-center gap-3 text-white transition-all transform translate-y-0 opacity-100 ${
+                  sendingStatus === "success" ? "bg-green-600" : "bg-red-600"
+                }`}
+                style={{ zIndex: 9999 }}
+              >
+                {sendingStatus === "success" ? (
+                  <>
+                    <CheckCircle2 className="w-5 h-5" />
+                    <span className="font-medium">Factura enviada correctamente</span>
+                  </>
+                ) : (
+                  <>
+                    <AlertCircle className="w-5 h-5" />
+                    <span className="font-medium">Error al enviar. Verifica tu conexión.</span>
+                  </>
+                )}
+              </div>
+            )}
+
+            <AIModal
+              isOpen={isAIModalOpen}
+              onClose={() => setIsAIModalOpen(false)}
+              onApply={handleAIMagicFill}
+            />
+
+            {/* BARRA DE HERRAMIENTAS */}
+            <div className="bg-white border-b border-gray-200 sticky top-0 z-50 print:hidden shadow-sm">
+              <div className="max-w-7xl mx-auto px-4 py-3 flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center gap-2">
+                  <Calculator className="w-6 h-6 text-blue-600" />
+                  <h1 className="text-xl font-bold text-gray-800 hidden sm:block">
+                    Generador de Facturas
+                  </h1>
+                </div>
+
+                <div className="flex items-center gap-2 flex-wrap">
+                  <button
+                    onClick={() => setIsAIModalOpen(true)}
+                    className="px-3 py-2 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border border-indigo-200 rounded-md flex items-center gap-2 text-sm font-medium transition mr-2"
+                  >
+                    <Sparkles size={18} />{" "}
+                    <span className="hidden sm:inline">IA</span>
+                  </button>
+
+
+
+                  <button
+                    onClick={handleNextNumber}
+                    className="p-2 text-gray-600 hover:bg-gray-100 rounded-md flex items-center gap-1 text-sm transition"
+                    title="Siguiente Número"
+                  >
+                    <RefreshCcw size={18} />
+                  </button>
+
+                  <div className="h-6 w-px bg-gray-300 mx-1"></div>
+
+                  <button
+                    onClick={sendToGoogleSheets}
+                    disabled={sendingStatus === "sending"}
+                    className={`px-4 py-2 rounded-md flex items-center gap-2 text-sm font-medium transition text-white ${
+                      sendingStatus === "success"
+                        ? "bg-green-600"
+                        : "bg-green-600 hover:bg-green-700"
+                    }`}
+                  >
+                    <Send size={18} />{" "}
+                    {sendingStatus === "sending" ? "..." : "Enviar a Sheets"}
+                  </button>
+
+                  <button
+                    onClick={handlePrint}
+                    className="px-4 py-2 bg-blue-600 text-white rounded-md flex items-center gap-2 text-sm font-medium hover:bg-blue-700 transition shadow-sm"
+                  >
+                    <Printer size={18} /> Imprimir / PDF
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div className="max-w-7xl mx-auto p-4 md:p-6">
+              <div
+                className={`mb-6 p-4 rounded-lg border flex items-start gap-3 print:hidden ${
+                  isComplete
+                    ? "bg-green-50 border-green-200 text-green-800"
+                    : "bg-orange-50 border-orange-200 text-orange-800"
+                }`}
+              >
+                {isComplete ? (
+                  <CheckCircle2 className="w-5 h-5 mt-0.5" />
+                ) : (
+                  <AlertCircle className="w-5 h-5 mt-0.5" />
+                )}
+                <div>
+                  <p className="font-medium">
+                    {isComplete ? "Datos mínimos completos." : "Faltan datos:"}
+                  </p>
+                  {!isComplete && (
+                    <ul className="list-disc list-inside text-sm mt-1 opacity-80">
+                      {missingFields.map((f) => (
+                        <li key={f}>{f}</li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                {/* EDITORES (IZQUIERDA) */}
+                <div className="print:hidden space-y-6">
+                  <div className="bg-white p-5 rounded-lg shadow-sm border border-gray-200">
+                    <h2 className="text-lg font-semibold text-gray-800 mb-4 flex items-center gap-2">
+                      <span className="bg-blue-100 text-blue-700 w-6 h-6 rounded-full flex items-center justify-center text-xs">
+                        1
+                      </span>{" "}
+                      Configuración
+                    </h2>
+                    <SectionTitle>Integración</SectionTitle>
+                    <InputField
+                      label="URL Web App (Google Apps Script)"
+                      placeholder="https://script.google.com/..."
+                      value={state.integration.sheetsWebAppUrl}
+                      onChange={(v) =>
+                        updateState("integration", "sheetsWebAppUrl", v)
+                      }
+                    />
+
+                    <SectionTitle>Emisor</SectionTitle>
+                    <div className="grid grid-cols-2 gap-4">
+                      <InputField
+                        label="Marca"
+                        value={state.issuer.brand}
+                        onChange={(v) => updateState("issuer", "brand", v)}
+                      />
+                      <InputField
+                        label="Razón Social"
+                        value={state.issuer.name}
+                        onChange={(v) => updateState("issuer", "name", v)}
+                      />
+                    </div>
+                    <TextAreaField
+                      label="Dirección Fiscal"
+                      value={state.issuer.address}
+                      onChange={(v) => updateState("issuer", "address", v)}
+                    />
+                    <div className="flex gap-2">
+                      <SelectField
+                        label="ID Label"
+                        value={state.issuer.taxIdLabel}
+                        onChange={(v) => updateState("issuer", "taxIdLabel", v)}
+                        options={["NIF", "CIF", "NIE", "Otro"]}
+                        className="w-1/3"
+                      />
+                      <InputField
+                        label="ID Fiscal"
+                        value={state.issuer.taxId}
+                        onChange={(v) => updateState("issuer", "taxId", v)}
+                        className="w-2/3"
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <SectionTitle>Factura</SectionTitle>
+                        <InputField
+                          label="Número"
+                          value={state.invoice.number}
+                          onChange={(v) => updateState("invoice", "number", v)}
+                        />
+                        <InputField
+                          label="Fecha Emisión"
+                          type="date"
+                          value={state.invoice.issueDate}
+                          onChange={(v) =>
+                            updateState("invoice", "issueDate", v)
+                          }
+                        />
+                        <InputField
+                          label="F. Operación"
+                          type="date"
+                          value={state.invoice.operationDate}
+                          onChange={(v) =>
+                            updateState("invoice", "operationDate", v)
+                          }
+                        />
+                        <InputField
+                          label="Vencimiento"
+                          type="date"
+                          value={state.invoice.dueDate}
+                          onChange={(v) => updateState("invoice", "dueDate", v)}
+                        />
+                      </div>
+                      <div>
+                        <SectionTitle>Cliente</SectionTitle>
+                        <InputField
+                          label="Nombre / Razón"
+                          value={state.client.name}
+                          onChange={(v) => updateState("client", "name", v)}
+                        />
+                        <TextAreaField
+                          label="Dirección"
+                          value={state.client.address}
+                          onChange={(v) => updateState("client", "address", v)}
+                        />
+                        <div className="grid grid-cols-3 gap-2">
+                          <SelectField
+                            label="Tipo ID"
+                            value={state.client.taxIdLabel}
+                            onChange={(v) =>
+                              updateState("client", "taxIdLabel", v)
+                            }
+                            options={["NIF", "CIF", "NIE", "Otro"]}
+                            className="col-span-1"
+                          />
+                          <InputField
+                            label="Doc"
+                            value={state.client.taxId}
+                            onChange={(v) => updateState("client", "taxId", v)}
+                            className="col-span-2"
+                          />
+                        </div>
+                        <InputField
+                          label="Email Cliente (para envío)"
+                          type="email"
+                          placeholder="cliente@ejemplo.com"
+                          value={state.client.email || ""}
+                          onChange={(v) => updateState("client", "email", v)}
+                        />
+                      </div>
+                    </div>
+
+                    <SectionTitle>
+                      <div className="flex justify-between items-center w-full">
+                        <span>Notas e Impuestos</span>
+                        <button
+                          onClick={handlePolishNotes}
+                          disabled={!state.invoice.notes || polishingNotes}
+                          className="text-indigo-600 text-xs font-medium flex items-center gap-1"
+                        >
+                          {polishingNotes ? (
+                            <Loader2 className="w-3 h-3 animate-spin" />
+                          ) : (
+                            <Sparkles className="w-3 h-3" />
+                          )}{" "}
+                          Mejorar
+                        </button>
+                      </div>
+                    </SectionTitle>
+                    <div className="flex items-center gap-4 mb-4 p-3 bg-gray-50 rounded border">
+                      <label className="flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={state.taxes.applyIrpf}
+                          onChange={(e) =>
+                            updateState("taxes", "applyIrpf", e.target.checked)
+                          }
+                          className="w-4 h-4 text-blue-600 rounded"
+                        />
+                        <span className="text-sm font-medium text-gray-700">
+                          Aplicar IRPF
+                        </span>
+                      </label>
+                      {state.taxes.applyIrpf && (
+                        <div className="w-32">
+                          <InputField
+                            label="% Retención"
+                            type="number"
+                            step="0.1"
+                            value={state.taxes.irpfPercent}
+                            onChange={(v) =>
+                              updateState("taxes", "irpfPercent", parseFloat(v))
+                            }
+                          />
+                        </div>
+                      )}
+                    </div>
+                    <TextAreaField
+                      label="Notas"
+                      value={state.invoice.notes}
+                      onChange={(v) => updateState("invoice", "notes", v)}
+                    />
+                  </div>
+
+                  <div className="bg-white p-5 rounded-lg shadow-sm border border-gray-200">
+                    <h2 className="text-lg font-semibold text-gray-800 mb-4 flex items-center justify-between gap-2">
+                      <span className="flex items-center gap-2">
+                        <span className="bg-blue-100 text-blue-700 w-6 h-6 rounded-full flex items-center justify-center text-xs">
+                          2
+                        </span>{" "}
+                        Líneas
+                      </span>
+                      <button
+                        onClick={addItem}
+                        className="text-xs flex items-center gap-1 bg-blue-50 text-blue-600 px-3 py-1 rounded hover:bg-blue-100 transition"
+                      >
+                        <Plus size={14} /> Añadir
+                      </button>
+                    </h2>
+                    <div className="space-y-4">
+                      {state.items.map((item, idx) => (
+                        <div
+                          key={idx}
+                          className="p-4 border rounded-lg bg-gray-50 relative group"
+                        >
+                          <button
+                            onClick={() => removeItem(idx)}
+                            className="absolute top-2 right-2 text-gray-400 hover:text-red-500 opacity-0 group-hover:opacity-100 transition"
+                          >
+                            <Trash2 size={16} />
+                          </button>
+                          <div className="grid grid-cols-12 gap-3">
+                            <div className="col-span-9">
+
+                              <div className="mb-2">
+                                <label className="block text-xs font-medium text-gray-700 mb-1">
+                                  Pack de Servicios
+                                </label>
+                                <select
+                                  value={item.packId || "other"}
+                                  onChange={(e) => {
+                                    const val = e.target.value;
+                                    const pack = SERVICE_PACKS.find((p) => p.id === val);
+                                    updateItem(idx, "packId", val);
+                                    if (val === "other") {
+                                      updateItem(idx, "title", "");
+                                      updateItem(idx, "detail", "");
+                                    } else if (pack) {
+                                      updateItem(idx, "title", pack.title);
+                                      updateItem(idx, "detail", pack.detail);
+                                    }
+                                  }}
+                                  className="w-full text-sm border-gray-300 rounded-md shadow-sm focus:border-blue-500 focus:ring-blue-500 border p-2 bg-white"
+                                >
+                                  {SERVICE_PACKS.map((p) => (
+                                    <option key={p.id} value={p.id}>
+                                      {p.label}
+                                    </option>
+                                  ))}
+                                </select>
+                              </div>
+
+                              <InputField
+                                label="Concepto (Título)"
+                                value={item.title}
+                                onChange={(v) => updateItem(idx, "title", v)}
+                              />
+                            </div>
+                            <div className="col-span-3">
+                              <InputField
+                                label="% IVA"
+                                type="number"
+                                value={item.vatPercent}
+                                onChange={(v) =>
+                                  updateItem(idx, "vatPercent", parseFloat(v))
+                                }
+                              />
+                            </div>
+                            <div className="col-span-12">
+                              <TextAreaField
+                                label="Detalle"
+                                rows={1}
+                                value={item.detail}
+                                onChange={(v) => updateItem(idx, "detail", v)}
+                              />
+                            </div>
+                            <div className="col-span-4">
+                              <InputField
+                                label="Cant."
+                                type="number"
+                                value={item.qty}
+                                onChange={(v) =>
+                                  updateItem(idx, "qty", parseFloat(v))
+                                }
+                              />
+                            </div>
+                            <div className="col-span-4">
+                              <InputField
+                                label="Precio U."
+                                type="number"
+                                value={item.unitPrice}
+                                onChange={(v) =>
+                                  updateItem(idx, "unitPrice", parseFloat(v))
+                                }
+                              />
+                            </div>
+                            <div className="col-span-4 flex flex-col justify-end pb-2">
+                              <div className="text-right text-sm font-semibold text-gray-700">
+                                {formatCurrency(item.qty * item.unitPrice)}
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                {/* VISTA PREVIA (DERECHA - IMPRIMIBLE) */}
+                <div className="relative flex justify-center print:w-full print:block print:absolute print:top-0 print:left-0 print:m-0">
+                  <div className="bg-white shadow-2xl print:shadow-none w-full max-w-[210mm] min-h-[297mm] p-8 md:p-12 text-sm text-gray-800 leading-relaxed flex flex-col justify-between print:w-full print:max-w-none">
+                    <div>
+                      <div className="flex justify-between items-start mb-12">
+                        <div className="w-1/2">
+                          <div className="mb-4">
+                             <img src="img/digitalencia_logo.svg" alt="Digitalencia" className="h-16 w-auto object-contain" />
+                          </div>
+                          <h1 className="text-4xl font-light tracking-wide text-gray-900 mb-1">
+                            FACTURA
+                          </h1>
+                          <p className="text-gray-500 font-medium">
+                            #{state.invoice.number}
+                          </p>
+                        </div>
+                        <div className="w-1/2 text-right">
+                          <h3 className="font-bold text-lg text-gray-900">
+                            {state.issuer.brand}
+                          </h3>
+                          <p className="font-medium">{state.issuer.name}</p>
+                          <p className="whitespace-pre-line text-gray-600 mb-2">
+                            {state.issuer.address}
+                          </p>
+                          <p className="text-gray-600">
+                            <span className="font-semibold">
+                              {state.issuer.taxIdLabel}:
+                            </span>{" "}
+                            {state.issuer.taxId}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-3 gap-8 mb-12 border-t border-b border-gray-100 py-6">
+                        <div>
+                          <h4 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">
+                            Facturar a
+                          </h4>
+                          <p className="font-bold text-gray-900">
+                            {state.client.name || "Cliente"}
+                          </p>
+                          <p className="whitespace-pre-line text-gray-600 mb-1">
+                            {state.client.address}
+                          </p>
+                          <p className="text-gray-600">
+                            <span className="font-semibold text-xs">
+                              {state.client.taxIdLabel}:
+                            </span>{" "}
+                            {state.client.taxId}
+                          </p>
+                        </div>
+                        <div>
+                          <h4 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">
+                            Detalles
+                          </h4>
+                          <div className="flex justify-between mb-1">
+                            <span className="text-gray-600">Emisión:</span>
+                            <span className="font-medium">
+                              {formatDate(state.invoice.issueDate)}
+                            </span>
+                          </div>
+                          <div className="flex justify-between mb-1">
+                            <span className="text-gray-600">Operación:</span>
+                            <span className="font-medium">
+                              {formatDate(state.invoice.operationDate)}
+                            </span>
+                          </div>
+                        </div>
+                        <div>
+                          <h4 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">
+                            Pago
+                          </h4>
+                          <p className="text-gray-900 font-medium mb-1">
+                            {state.invoice.paymentMethod}
+                          </p>
+                          {state.invoice.dueDate && (
+                            <p className="text-red-600 text-xs font-bold mb-2">
+                              Vence: {formatDate(state.invoice.dueDate)}
+                            </p>
+                          )}
+                          {state.invoice.iban && (
+                            <p className="text-gray-600 text-xs break-all bg-gray-50 p-1 rounded font-mono">
+                              {state.invoice.iban}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+
+                      <table className="w-full mb-8">
+                        <thead>
+                          <tr className="border-b-2 border-gray-800">
+                            <th className="py-2 text-left font-bold text-gray-800 w-12">
+                              #
+                            </th>
+                            <th className="py-2 text-left font-bold text-gray-800">
+                              Descripción
+                            </th>
+                            <th className="py-2 text-right font-bold text-gray-800 w-20">
+                              Cant.
+                            </th>
+                            <th className="py-2 text-right font-bold text-gray-800 w-24">
+                              Precio
+                            </th>
+                            <th className="py-2 text-right font-bold text-gray-800 w-28">
+                              Total
+                            </th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {state.items.map((item, i) => (
+                            <tr key={i} className="border-b border-gray-100">
+                              <td className="py-3 align-top text-gray-500 text-xs">
+                                {i + 1}
+                              </td>
+                              <td className="py-3 align-top">
+                                <p className="font-bold text-gray-800">
+                                  {item.title}
+                                </p>
+                                {item.detail && (
+                                  <p className="text-gray-500 text-xs mt-1 whitespace-pre-line">
+                                    {item.detail}
+                                  </p>
+                                )}
+                              </td>
+                              <td className="py-3 align-top text-right text-gray-600">
+                                {item.qty}
+                              </td>
+                              <td className="py-3 align-top text-right text-gray-600">
+                                {formatCurrency(item.unitPrice)}
+                              </td>
+                              <td className="py-3 align-top text-right font-medium text-gray-800">
+                                {formatCurrency(item.qty * item.unitPrice)}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    <div>
+                      <div className="flex flex-col md:flex-row gap-8 items-start justify-between border-t-2 border-gray-200 pt-6">
+                        <div className="w-full md:w-1/2">
+                          <h4 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">
+                            Impuestos
+                          </h4>
+                          <table className="w-full text-xs">
+                            <thead>
+                              <tr className="border-b border-gray-200 text-gray-500">
+                                <th className="text-left py-1 font-normal">
+                                  Tipo
+                                </th>
+                                <th className="text-right py-1 font-normal">
+                                  Base
+                                </th>
+                                <th className="text-right py-1 font-normal">
+                                  Cuota
+                                </th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {totals.vatBreakdown.map((row) => (
+                                <tr
+                                  key={row.percent}
+                                  className="border-b border-gray-50"
+                                >
+                                  <td className="py-1 text-gray-700">
+                                    IVA {row.percent}%
+                                  </td>
+                                  <td className="py-1 text-right text-gray-600">
+                                    {formatCurrency(row.base)}
+                                  </td>
+                                  <td className="py-1 text-right text-gray-600">
+                                    {formatCurrency(row.quota)}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                        <div className="w-full md:w-5/12">
+                          <div className="flex justify-between mb-2 text-gray-600">
+                            <span>Base Imponible</span>
+                            <span className="font-medium text-gray-900">
+                              {formatCurrency(totals.base)}
+                            </span>
+                          </div>
+                          <div className="flex justify-between mb-2 text-gray-600">
+                            <span>Total IVA</span>
+                            <span className="font-medium text-gray-900">
+                              {formatCurrency(totals.vatTotal)}
+                            </span>
+                          </div>
+                          {state.taxes.applyIrpf && (
+                            <div className="flex justify-between mb-3 text-red-600">
+                              <span>IRPF (-{state.taxes.irpfPercent}%)</span>
+                              <span className="font-medium">
+                                -{formatCurrency(totals.irpfAmount)}
+                              </span>
+                            </div>
+                          )}
+                          <div className="flex justify-between pt-3 border-t-2 border-gray-800 text-xl font-bold text-gray-900">
+                            <span>TOTAL</span>
+                            <span>{formatCurrency(totals.grandTotal)}</span>
+                          </div>
+                        </div>
+                      </div>
+                      <div className="mt-12 pt-6 border-t border-gray-100 text-xs text-gray-500">
+                        <h4 className="font-bold text-gray-600 mb-1">Notas</h4>
+                        <ul className="list-disc list-inside space-y-1">
+                          {state.invoice.notes
+                            .split("\n")
+                            .map(
+                              (line, i) =>
+                                line.trim() && <li key={i}>{line}</li>
+                            )}
+                        </ul>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      }
+
+      const root = createRoot(document.getElementById("root"));
+      root.render(<InvoiceApp />);
+    </script>
+  </body>
+</html>

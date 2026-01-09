@@ -1,0 +1,200 @@
+ --- CONFIGURACIÓN ---
+const SHEET_NAME = Facturas;
+const SPREADSHEET_ID = 1ShgCFbg3KBMNHiQgTvnBVuUhnz_jS_TiFMJLeHGH504;
+const FOLDER_NAME = facturas digitalencia;  Nombre de la carpeta en Drive
+
+function doPost(e) {
+  const lock = LockService.getScriptLock();
+  lock.tryLock(10000); 
+
+   --- DEBUGGING LOG TO SHEET ---
+  let debugSheet;
+  try {
+    const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+    debugSheet = ss.getSheetByName(Logs);
+    if (!debugSheet) {
+      debugSheet = ss.insertSheet(Logs);
+      debugSheet.appendRow([Timestamp, Type, DataError]);
+    }
+  } catch(e) {
+     If we can't open the sheet, we can't log.
+    return ContentService.createTextOutput(Critical Error Cannot access Spreadsheet. Check ID.);
+  }
+
+  try {
+    const jsonString = e.parameter.payload; 
+    let payloadToLog = jsonString;
+    
+    if (!jsonString && e.postData && e.postData.contents) {
+      payloadToLog = e.postData.contents;
+    }
+
+    debugSheet.appendRow([new Date(), Incoming Request, payloadToLog  No Payload]);
+
+     Reuse parsing logic
+    let finalJsonString = jsonString;
+    if (!finalJsonString && e.postData && e.postData.contents) {
+      finalJsonString = e.postData.contents;
+    }
+
+    if (!finalJsonString) throw new Error(No payload received);
+
+    const fullData = JSON.parse(finalJsonString);
+    const sheetData = fullData.sheetData;
+    const rawData = fullData.raw;
+
+    if (!sheetData  !rawData) throw new Error(Invalid JSON Structure);
+
+     1. GENERAR PDF
+    const pdfUrl = createInvoicePDF(rawData, sheetData);
+
+     2. ACTUALIZAR SHEET
+    const sheet = getSheet();
+    const newRow = [
+      sheetData.invoiceNumber,
+      sheetData.issueDate,
+      sheetData.clientName,
+      sheetData.clientTaxId,
+      sheetData.baseTotal,
+      sheetData.vatTypes,
+      sheetData.vatTotalFormatted,
+      sheetData.irpfPercent,
+      sheetData.irpfAmountFormatted,
+      sheetData.grandTotal,
+      sheetData.pdfLink  pdfUrl
+    ];
+
+    sheet.appendRow(newRow);
+    debugSheet.appendRow([new Date(), Success, Row added for  + sheetData.invoiceNumber]);
+
+    return ContentService.createTextOutput(Success);
+
+  } catch (error) {
+    if(debugSheet) debugSheet.appendRow([new Date(), Error, error.toString()]);
+    return ContentService.createTextOutput(Error  + error.toString());
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+ --- FUNCIÓN GENERADORA DE PDF ---
+function createInvoicePDF(data, formattedData) {
+   A. Buscar o crear carpeta
+  const folders = DriveApp.getFoldersByName(FOLDER_NAME);
+  let folder;
+  if (folders.hasNext()) {
+    folder = folders.next();
+  } else {
+    folder = DriveApp.createFolder(FOLDER_NAME);
+  }
+
+   B. Plantilla HTML para el PDF (Estilo básico profesional)
+  const htmlTemplate = `
+    div style=font-family 'Helvetica Neue', Helvetica, Arial, sans-serif; padding 40px; color #333; max-width 800px; margin 0 auto;
+      
+      !-- CABECERA --
+      div style=display flex; justify-content space-between; border-bottom 2px solid #eee; padding-bottom 20px; margin-bottom 30px;
+        div style=width 50%;
+           h1 style=margin 0; font-size 28px; color #333; font-weight 300; letter-spacing 1px;FACTURAh1
+           p style=margin 5px 0; color #666; font-weight bold;#${formattedData.invoiceNumber}p
+        div
+        div style=width 50%; text-align right;
+           h3 style=margin 0; color #000; font-size 16px;${data.issuer.brand}h3
+           p style=margin 3px 0; font-size 12px; color #555;${data.issuer.name}p
+           p style=margin 3px 0; font-size 12px; color #555;${data.issuer.taxIdLabel} ${data.issuer.taxId}p
+           p style=margin 3px 0; font-size 12px; color #555; white-space pre-line;${data.issuer.address}p
+        div
+      div
+
+      !-- DATOS CLIENTE Y DETALLES --
+      div style=display flex; margin-bottom 40px;
+        div style=width 50%;
+            h4 style=margin-bottom 10px; color #999; text-transform uppercase; font-size 10px; letter-spacing 1px;Facturar ah4
+            p style=margin 0; font-weight bold; font-size 14px;${data.client.name}p
+            p style=margin 3px 0; font-size 12px; color #555;${data.client.taxIdLabel} ${data.client.taxId}p
+            p style=margin 3px 0; font-size 12px; color #555; white-space pre-line;${data.client.address}p
+        div
+        div style=width 50%; text-align right;
+             table style=width 100%; font-size 12px; color #555;
+               trtd style=text-align right; padding-bottom 5px;strongFecha Emisiónstrongtdtd style=text-align right; padding-bottom 5px;${formattedData.issueDate}tdtr
+               trtd style=text-align right;strongForma Pagostrongtdtd style=text-align right;${data.invoice.paymentMethod}tdtr
+             table
+        div
+      div
+
+      !-- TABLA DE PRODUCTOS --
+      table style=width 100%; border-collapse collapse; margin-bottom 30px;
+        thead
+          tr style=background-color #f8f9fa; text-transform uppercase;
+            th style=padding 12px 8px; text-align left; font-size 10px; color #666; border-bottom 1px solid #ddd;Conceptoth
+            th style=padding 12px 8px; text-align right; font-size 10px; color #666; border-bottom 1px solid #ddd;Cant.th
+            th style=padding 12px 8px; text-align right; font-size 10px; color #666; border-bottom 1px solid #ddd;Precio U.th
+            th style=padding 12px 8px; text-align right; font-size 10px; color #666; border-bottom 1px solid #ddd;Totalth
+          tr
+        thead
+        tbody
+          ${data.items.map(item = `
+            tr
+              td style=padding 12px 8px; font-size 12px; border-bottom 1px solid #eee;
+                strong${item.title}strong
+                ${item.detail  `brspan style=color #777; font-size 10px;${item.detail}span`  ''}
+              td
+              td style=padding 12px 8px; text-align right; font-size 12px; border-bottom 1px solid #eee;${item.qty}td
+              td style=padding 12px 8px; text-align right; font-size 12px; border-bottom 1px solid #eee;${item.unitPrice.toFixed(2)}td
+              td style=padding 12px 8px; text-align right; font-size 12px; border-bottom 1px solid #eee;${(item.qty  item.unitPrice).toFixed(2)}td
+            tr
+          `).join('')}
+        tbody
+      table
+
+      !-- TOTALES --
+      div style=margin-left auto; width 250px;
+         div style=display flex; justify-content space-between; margin-bottom 5px; font-size 12px;
+            spanBase Imponiblespan
+            span${formattedData.baseTotal}span
+         div
+         div style=display flex; justify-content space-between; margin-bottom 5px; font-size 12px;
+            spanIVA (${formattedData.vatTypes})span
+            span${formattedData.vatTotalFormatted}span
+         div
+         ${data.taxes.applyIrpf  `
+         div style=display flex; justify-content space-between; margin-bottom 5px; font-size 12px; color #d00;
+            spanIRPF (${formattedData.irpfPercent})span
+            span-${formattedData.irpfAmountFormatted}span
+         div`  ''}
+         div style=display flex; justify-content space-between; margin-top 10px; padding-top 10px; border-top 2px solid #333; font-size 16px; font-weight bold;
+            spanTOTALspan
+            span${formattedData.grandTotal}span
+         div
+      div
+
+      !-- PIE DE PÁGINA --
+      div style=margin-top 50px; padding-top 20px; border-top 1px solid #eee; text-align center; font-size 10px; color #aaa;
+         p${data.invoice.notes  data.invoice.notes.replace(ng, ' ')  'Gracias por su confianza.'}p
+      div
+
+    div
+  `;
+
+   C. Crear Blob y Archivo PDF
+  const fileName = `Factura ${formattedData.invoiceNumber} - ${data.client.name}.pdf`;
+  const blob = Utilities.newBlob(htmlTemplate, MimeType.HTML, fileName).getAs(MimeType.PDF);
+  const file = folder.createFile(blob);
+  
+   D. Hacer el archivo público (Opcional puedes quitar esto si prefieres privacidad total)
+  file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+
+  return file.getUrl();
+}
+
+function getSheet() {
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  let sheet = ss.getSheetByName(SHEET_NAME);
+  if (!sheet) {
+    sheet = ss.insertSheet(SHEET_NAME);
+    sheet.appendRow([Nº Factura, Fecha Emisión, Cliente, NIF Cliente, Base Imponible, % IVA, Total IVA, % IRPF, Retención IRPF, TOTAL, Link PDF]);
+    sheet.setFrozenRows(1);
+    sheet.getRange(1, 1, 1, 11).setFontWeight(bold);
+  }
+  return sheet;
+}
