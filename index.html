@@ -4,6 +4,10 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Generador de Facturas Pro</title>
+    <!-- Google Fonts: Montserrat -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@600&display=swap" rel="stylesheet">
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- Configuración de Imports para React y Lucide -->
@@ -86,37 +90,26 @@
       } from "lucide-react";
 
       // --- CONFIGURACIÓN ---
-      // Si tienes una API Key de Gemini, ponla aquí para activar las funciones de IA
-      const apiKey = "AIzaSyCblnC6mYlKYtxEj6SPMHu2IN4C7PRilCs";
+      // La API Key de Gemini se gestiona ahora en el backend (.env)
 
       // Función auxiliar para llamar a Gemini
-      const callGemini = async (prompt, retries = 3) => {
-        if (!apiKey) {
-          throw new Error("API Key no configurada");
+      // Función auxiliar para llamar a Gemini (Proxy)
+      const callGemini = async (prompt) => {
+        try {
+          const response = await fetch("/api/ai-magic", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ prompt }),
+          });
+
+          if (!response.ok) throw new Error(`Error ${response.status}: ${response.statusText}`);
+
+          const data = await response.json();
+          return data.text || "";
+        } catch (err) {
+          console.error("Error llamando a la IA:", err);
+          throw err;
         }
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
-        const payload = {
-          contents: [{ parts: [{ text: prompt }] }],
-        };
-
-        for (let i = 0; i < retries; i++) {
-          try {
-            const response = await fetch(url, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify(payload),
-            });
-
-            if (!response.ok) throw new Error(`Error ${response.status}`);
-
-            const data = await response.json();
-            return data.candidates?.[0]?.content?.parts?.[0]?.text || "";
-          } catch (err) {
-            if (i === retries - 1) throw err;
-            await new Promise((r) => setTimeout(r, 1000 * Math.pow(2, i))); // Backoff
-          }
-        }
-        return "";
       };
 
       // --- ESTADO INICIAL ---
@@ -160,9 +153,11 @@
         },
       ];
 
+      // Logo pre-convertido a Base64 para evitar errores de codificación
+      const LOGO_BASE64 = "data:image/png;base64,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
       const initialState = {
         integration: {
-          sheetsWebAppUrl: "https://script.google.com/macros/s/AKfycbz3ISZZdIhVS-VPaSh7uXm0Ie_qdtml5tE-HZScD2zuKHUTGJr0kCZ3mQd0avCznCH8rQ/exec",
+          sheetsWebAppUrl: "", // Se carga desde /api/config
         },
         issuer: {
           brand: "DIGITALENCIA",
@@ -452,6 +447,24 @@
         const [isAIModalOpen, setIsAIModalOpen] = useState(false);
         const [polishingNotes, setPolishingNotes] = useState(false);
 
+        // Cargar configuración del servidor
+        useEffect(() => {
+          fetch("/api/config")
+            .then((res) => res.json())
+            .then((data) => {
+              if (data.sheetsWebAppUrl) {
+                setState((prev) => ({
+                  ...prev,
+                  integration: {
+                    ...prev.integration,
+                    sheetsWebAppUrl: data.sheetsWebAppUrl,
+                  },
+                }));
+              }
+            })
+            .catch((err) => console.error("Error cargando config:", err));
+        }, []);
+
         // Guardar el número de factura en LocalStorage cada vez que cambie
         useEffect(() => {
           localStorage.setItem("invoice_number", state.invoice.number);
@@ -463,15 +476,10 @@
         }, [state.items, state.taxes]);
 
         const handleAIMagicFill = async (text) => {
-          if (!apiKey) {
-            alert(
-              "Para usar funciones IA debes editar este archivo HTML y añadir tu API KEY en la línea de 'configuración'."
-            );
-            return;
-          }
+          // Verificación de API Key eliminada (ahora en backend)
           const prompt = `
-              You are a data extraction assistant. Extract invoice information from the following text into a JSON object.
-              Structure: { "client": { "name": "...", ... }, "invoice": { ... }, "items": [ ... ] }
+              You are a data extraction assistant. Extract ONLY client information from the text. DO NOT extract items/products/invoice details.
+              Structure: { "client": { "name": "...", "taxId": "...", "address": "...", "email": "..." } }
               Text to analyze: "${text}"
             `;
 
@@ -486,11 +494,6 @@
             setState((prev) => ({
               ...prev,
               client: { ...prev.client, ...parsed.client },
-              invoice: { ...prev.invoice, ...parsed.invoice },
-              items:
-                Array.isArray(parsed.items) && parsed.items.length > 0
-                  ? parsed.items
-                  : prev.items,
             }));
             setIsAIModalOpen(false);
           } catch (e) {
@@ -500,12 +503,7 @@
 
         const handlePolishNotes = async () => {
           if (!state.invoice.notes) return;
-          if (!apiKey) {
-            alert(
-              "Para usar funciones IA debes editar este archivo HTML y añadir tu API KEY."
-            );
-            return;
-          }
+          // Verificación de API Key eliminada (ahora en backend)
           setPolishingNotes(true);
           const prompt = `Reescribe profesionalmente: "${state.invoice.notes}"`;
 
@@ -581,19 +579,10 @@
           }
           setSendingStatus("sending");
 
-          // Convertir Logo a Base64
-          let logoBase64 = "";
-          try {
-            const response = await fetch("img/digitalencia_logo.svg");
-            const blob = await response.blob();
-            logoBase64 = await new Promise((resolve) => {
-              const reader = new FileReader();
-              reader.onloadend = () => resolve(reader.result);
-              reader.readAsDataURL(blob);
-            });
-          } catch (e) {
-            console.error("Error al cargar logo para envío:", e);
-          }
+          // Convertir Logo embed a Base64
+          // Convertir Logo embed a Base64
+          // Usamos la constante pre-calculada
+          const logoBase64 = LOGO_BASE64;
 
           // Simulación de envío para la versión local (ya que el iframe puede ser bloqueado por CORS en local file://)
           // En un servidor real funcionaría igual que la app original.
@@ -1055,8 +1044,9 @@
                     <div>
                       <div className="flex justify-between items-start mb-12">
                         <div className="w-1/2">
-                          <div className="mb-4">
-                             <img src="img/digitalencia_logo.svg" alt="Digitalencia" className="h-16 w-auto object-contain" />
+                          <div className="flex items-center mb-4">
+                             <img src="img/logoDigitalencia.png" alt="Digitalencia" className="h-16 w-auto object-contain" />
+
                           </div>
                           <h1 className="text-4xl font-light tracking-wide text-gray-900 mb-1">
                             FACTURA
